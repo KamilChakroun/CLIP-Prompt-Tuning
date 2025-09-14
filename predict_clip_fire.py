@@ -1,4 +1,3 @@
-# predict_clip_fire_improved.py
 import os
 import torch
 import pandas as pd
@@ -21,7 +20,7 @@ model.eval()
 
 # ------------------- LOAD LEARNED PROMPTS -------------------
 learned_prompts = torch.load(prompt_path, map_location=device)
-if isinstance(learned_prompts, dict):  # in case it was saved as dict
+if isinstance(learned_prompts, dict):
     learned_prompts = learned_prompts.get("prompts", None)
 if learned_prompts is None:
     raise ValueError("❌ Could not load learned prompts correctly.")

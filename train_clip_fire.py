@@ -1,4 +1,3 @@
-# train_clip_fire_improved.py
 import os, glob
 from PIL import Image
 import torch
@@ -11,9 +10,9 @@ from tqdm import tqdm
 # ------------------- CONFIG -------------------
 device = "cuda" if torch.cuda.is_available() else "cpu"
 batch_size = 16
-num_epochs = 20       # increase epochs
+num_epochs = 20
 lr = 1e-3
-prompt_length = 10    # longer prompts
+prompt_length = 10
 val_split = 0.2       # use 20% for validation
 fire_dir = r"C:\Users\K1000\Desktop\Dataset\train\fire"
 non_fire_dir = r"C:\Users\K1000\Desktop\Dataset\train\non_fire"
