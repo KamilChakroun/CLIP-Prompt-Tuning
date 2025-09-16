@@ -87,9 +87,9 @@ Accuracy:
 
 ## 🎯 Why Prompt Tuning?
 
-✅ Much faster than fine-tuning CLIP’s full weights.
-✅ Requires fewer resources (only prompt vectors are trained).
-✅ Retains CLIP’s general knowledge while adapting to fire detection.
+- ✅ Much faster than fine-tuning CLIP’s full weights.
+- ✅ Requires fewer resources (only prompt vectors are trained).
+- ✅ Retains CLIP’s general knowledge while adapting to fire detection.
 
 ## 🙌 Acknowledgements
 - [OpenCLIP](https://github.com/mlfoundations/open_clip) for the pretrained CLIP models.  
