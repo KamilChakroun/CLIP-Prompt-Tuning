@@ -14,8 +14,8 @@ num_epochs = 20
 lr = 1e-3
 prompt_length = 10
 val_split = 0.2       # use 20% for validation
-fire_dir = r"C:\Users\K1000\Desktop\Dataset\train\fire"
-non_fire_dir = r"C:\Users\K1000\Desktop\Dataset\train\non_fire"
+fire_dir = os.getenv("TRAIN_FIRE_PATH")
+non_fire_dir = os.getenv("TRAIN_NONFIRE_PATH")
 
 # ------------------- LOAD MODEL -------------------
 model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='openai')

@@ -7,8 +7,8 @@ from sklearn.metrics import classification_report, accuracy_score
 
 # ------------------- SETTINGS -------------------
 device = "cuda" if torch.cuda.is_available() else "cpu"
-test_fire_path = r"C:\Users\K1000\Desktop\Dataset\test\fire"
-test_nonfire_path = r"C:\Users\K1000\Desktop\Dataset\test\non_fire"
+test_fire_path = os.getenv("TEST_FIRE_PATH")
+test_nonfire_path = os.getenv("TEST_NONFIRE_PATH")
 prompt_path = "learned_prompts.pth"
 output_csv = "fire_predictions.csv"
 
