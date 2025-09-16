@@ -70,10 +70,10 @@ Classification Report:
 
         fire       1.00      1.00      1.00      7000
     non fire       1.00      0.99      0.99      3500
-
+    
     accuracy                           1.00     10500
-   macro avg       1.00      1.00      1.00     10500
-weighted avg       1.00      1.00      1.00     10500
+    macro avg       1.00      1.00      1.00     10500
+    weighted avg       1.00      1.00      1.00     10500
 
 Accuracy:
 ✅ Overall Accuracy: 0.9965
@@ -100,7 +100,7 @@ Accuracy:
 ```mermaid
 flowchart TD
     A[Input Image] --> B[CLIP Image Encoder]
-    C[Class Names: "fire", "non fire"] --> D[Learned Soft Prompts]
+    C[Class Names: fire, non fire] --> D[Learned Soft Prompts]
     D --> E[CLIP Text Encoder]
     B --> F[Image Features]
     E --> G[Prompt-Tuned Text Features]
