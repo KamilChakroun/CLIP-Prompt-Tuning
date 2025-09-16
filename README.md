@@ -6,7 +6,7 @@ Instead of retraining the whole model, we **learn prompt embeddings** that bette
 ---
 
 ## 📂 Project Structure
-
+``` bash
 ├── train_clip_fire.py # Train soft prompts on fire/non-fire images
 ├── predict_clip_fire.py # Run inference + save predictions
 ├── learned_prompts.pth # Saved trained soft prompts (after training)
@@ -18,7 +18,7 @@ Instead of retraining the whole model, we **learn prompt embeddings** that bette
 │ └── test/
 │ │ ├── fire/
 │ │ └── non_fire/
-
+```
 ---
 
 ## ⚙️ How It Works
@@ -45,8 +45,7 @@ Instead of retraining the whole model, we **learn prompt embeddings** that bette
 pip install torch torchvision pandas scikit-learn tqdm pillow open_clip_torch
 
 ### 2️⃣ Organize dataset
-bash
-Copy code
+``` bash
 Dataset/
 ├── train/
 │   ├── fire/       # images with fire
@@ -54,7 +53,8 @@ Dataset/
 └── test/
     ├── fire/
     └── non_fire/
-    
+```
+
 ### 3️⃣ Train prompts
 python train_clip_fire.py
 
@@ -72,8 +72,8 @@ Classification Report:
     non fire       1.00      0.99      0.99      3500
     
     accuracy                           1.00     10500
-    macro avg       1.00      1.00      1.00     10500
-    weighted avg       1.00      1.00      1.00     10500
+    macro avg      1.00      1.00      1.00     10500
+    weighted avg   1.00      1.00      1.00     10500
 
 Accuracy:
 ✅ Overall Accuracy: 0.9965
@@ -104,7 +104,7 @@ flowchart TD
     D --> E[CLIP Text Encoder]
     B --> F[Image Features]
     E --> G[Prompt-Tuned Text Features]
-    F --> H[Similarity Computation (dot product)]
+    F --> H[Similarity Computation - dot product]
     G --> H
     H --> I[Prediction: fire / non fire]
 ```
