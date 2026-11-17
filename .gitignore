@@ -1,1 +1,4 @@
 .env
+__pycache__/
+fire_predictions.csv
+learned_prompts_coop.pth

@@ -1,110 +1,61 @@
-# 🔥 Fire Detection using CLIP + Prompt Tuning
+# Fire classification with CLIP + prompt tuning (CoOp)
 
-This project fine-tunes **soft prompts** for [CLIP](https://github.com/mlfoundations/open_clip) (ViT-B-32) to detect **fire vs. non-fire** images.  
-Instead of retraining the whole model, we **learn prompt embeddings** that better align with your dataset, making training efficient and accurate.
+Classifies images, or YOLO fire crops, as **fire** vs. **not fire** with a frozen [OpenCLIP](https://github.com/mlfoundations/open_clip) ViT-B-32. It is meant as a stage-2 verifier behind a YOLO fire detector.
 
----
-
-## 📂 Project Structure
-``` bash
-├── train_clip_fire.py # Train soft prompts on fire/non-fire images
-├── predict_clip_fire.py # Run inference + save predictions
-├── learned_prompts.pth # Saved trained soft prompts (after training)
-├── fire_predictions.csv # Example output of predictions
-├── Dataset/
-│ ├── train/
-│ │ ├── fire/
-│ │ └── non_fire/
-│ └── test/
-│ │ ├── fire/
-│ │ └── non_fire/
-```
----
-
-## ⚙️ How It Works
-
-1. **Training (`train_clip_fire.py`)**
-   - Loads CLIP (ViT-B-32) pretrained on 400M image–text pairs.
-   - Initializes **learned prompt vectors** (random tensors).
-   - Trains only the prompts (not the CLIP weights) to better separate **fire** vs **non fire**.
-   - Uses **cross-entropy loss** with class balancing.
-   - Saves prompts in `learned_prompts.pth`.
-
-2. **Prediction (`predict_clip_fire.py`)**
-   - Loads the trained soft prompts.
-   - Encodes test images with CLIP.
-   - Combines prompts + CLIP embeddings → computes similarity.
-   - Outputs predictions + confidence scores into a CSV.
-   - Prints a **classification report** (precision, recall, F1, accuracy).
-
----
-
-## 🚀 Usage
-
-### 1️⃣ Install dependencies
-pip install torch torchvision pandas scikit-learn tqdm pillow open_clip_torch
-
-### 2️⃣ Organize dataset
-``` bash
-Dataset/
-├── train/
-│   ├── fire/       # images with fire
-│   └── non_fire/   # images without fire
-└── test/
-    ├── fire/
-    └── non_fire/
-```
-
-### 3️⃣ Train prompts
-python train_clip_fire.py
-
-### 4️⃣ Run inference
-python predict_clip_fire.py
-Results will be saved to => fire_predictions.csv
-+ Console output with accuracy & classification report
-
-### 📊 Example Output
-Classification Report:
-
-              precision    recall  f1-score   support
-
-        fire       1.00      1.00      1.00      7000
-    non fire       1.00      0.99      0.99      3500
-    
-    accuracy                           1.00     10500
-    macro avg      1.00      1.00      1.00     10500
-    weighted avg   1.00      1.00      1.00     10500
-
-Accuracy:
-✅ Overall Accuracy: 0.9965
-
-## 🧠 Key Concepts
-
-. CLIP (Contrastive Language-Image Pretraining): Pretrained model linking images ↔ text.
-. Prompt Tuning: Learn small trainable vectors (“soft prompts”) instead of retraining the full model.
-. Cross-Entropy Loss: Encourages fire images to align with the “fire” prompt, and non-fire with “non fire”.
-. Adam Optimizer: Updates prompt vectors based on gradients.
-
-## 🎯 Why Prompt Tuning?
-
-- ✅ Much faster than fine-tuning CLIP’s full weights.
-- ✅ Requires fewer resources (only prompt vectors are trained).
-- ✅ Retains CLIP’s general knowledge while adapting to fire detection.
-
-## 🙌 Acknowledgements
-- [OpenCLIP](https://github.com/mlfoundations/open_clip) for the pretrained CLIP models.  
-- [Prompt Tuning: Unlocking the Potential of CLIP for Image-Text Matching](https://medium.com/@abhinavnagpal12/prompt-tuning-unlocking-the-potential-of-clip-for-image-text-matching-9dcc4772222b) — insightful article that helped in understanding and applying prompt tuning to this project.  
-
-## 🏗️ Architecture Flow
+Only the **prompt context** is trained, following CoOp ([Zhou et al., 2022](https://arxiv.org/abs/2109.01134)). The learnable vectors are token embeddings placed before the class name, and the whole prompt runs through CLIP's text encoder:
 
 ```mermaid
-flowchart TD
-    A[Input Image] --> B[CLIP Image Encoder]
-    C[Class Names: fire, non fire] --> D[Learned Soft Prompts]
-    D --> E[CLIP Text Encoder]
-    B --> F[Image Features]
-    E --> G[Prompt-Tuned Text Features]
-    F --> H[Similarity Computation - dot product]
+flowchart LR
+    A[Image] --> B[CLIP image encoder, frozen] --> F[image features]
+    C["[V1 … V16] + 'fire' / 'normal scene'"] --> E[CLIP text encoder, frozen] --> G[class weights]
+    F --> H[cosine × 100 → softmax → P fire]
     G --> H
-    H --> I[Prediction: fire / non fire]
 ```
+
+## Files
+| File | Purpose |
+|---|---|
+| `clip_fire.py` | Shared code: CLIP loading, prompt learner, feature extraction, checkpoint I/O, metrics |
+| `train_clip_fire.py` | Trains the prompts. Saves `learned_prompts_coop.pth` with the best val epoch and a threshold for 99% fire recall |
+| `predict_clip_fire.py` | P(fire) for a folder and, when labels are given, a report: confusion matrix, ROC-AUC, AP, recall/rejection at the threshold |
+| `learned_prompts.pth` | **Legacy** checkpoint (2025-09), kept for comparison (see below) |
+
+## Usage
+```bash
+pip install -r requirements.txt
+```
+```bash
+python train_clip_fire.py --fire DATA/train/fire --not-fire DATA/train/non_fire
+```
+```bash
+python predict_clip_fire.py --fire DATA/test/fire --not-fire DATA/test/non_fire
+```
+```bash
+python predict_clip_fire.py --images SOME/FOLDER
+```
+- Folders are searched recursively.
+- The paths can also come from `.env`: `TRAIN_FIRE_PATH`, `TRAIN_NONFIRE_PATH`, `TEST_FIRE_PATH`, `TEST_NONFIRE_PATH`.
+- `--help` lists every option. Useful ones:
+  - `--ctx-init "a photo of a"`: start the context from these words instead of random noise.
+  - `--csc`: one context per class instead of one shared context.
+  - `--n-ctx`: number of context tokens.
+  - `--resize-mode`: how the image is squared before CLIP.
+  - `--target-recall`: fire recall the stored threshold is chosen for.
+
+Training caches the CLIP image features once, so each epoch takes seconds.
+
+## Design choices
+- **Preprocessing:**
+  - Default `--resize-mode longest`: pad to a square, then resize, so nothing is cut off. CLIP's default (`shortest`) center-crops, which cuts the edges off wide crops.
+  - The mode is stored in the checkpoint, so prediction always matches training.
+- **QuickGELU:** OpenAI's weights expect QuickGELU, but open_clip's `ViT-B-32` config uses GELU. New checkpoints force QuickGELU when `pretrained=openai`.
+- **Class text:** `fire` vs. `normal scene`. CLIP handles negations like "non fire" badly. Change it with `--class-names`.
+- **Split:** the validation split is stratified and seeded. It is **per image**, so frames from the same video can land in both train and val. Evaluate on a test set from different videos or cameras.
+- **Checkpoint:** keeps the epoch with the lowest val loss. It stores the P(fire) threshold that keeps `--target-recall` (default 99%) of the val fire images, along with the full config.
+
+## Legacy checkpoint (`learned_prompts.pth`)
+The original 2025 version was **not real prompt tuning**.
+- Its learned vectors were averaged with CLIP's text output *after* the encoder, which makes it a linear probe on CLIP image features.
+- Its predict script combined the vectors with a different formula than training used. The classifier it evaluated was never the one that was trained.
+
+`predict_clip_fire.py` still reads that checkpoint, using the formula it was **trained** with and its original setup: center-crop, no QuickGELU, threshold 0.5. Its README result (accuracy 0.9965 on 10,500 test images) cannot be reproduced, because the dataset is missing.

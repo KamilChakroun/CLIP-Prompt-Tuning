@@ -1,103 +1,97 @@
+"""Predict P(fire) with a trained checkpoint and, if labels are known, evaluate it.
+
+Usage:
+  # labelled test set -> CSV + report
+  python predict_clip_fire.py --fire DIR --not-fire DIR [--ckpt learned_prompts_coop.pth]
+  # unlabelled folder -> CSV only
+  python predict_clip_fire.py --images DIR
+  (TEST_FIRE_PATH / TEST_NONFIRE_PATH from .env or the shell are used when no folder is given)
+
+Checkpoints: new CoOp checkpoints from train_clip_fire.py, or the original learned_prompts.pth
+(read with the formula it was trained with, CLIP center-crop preprocessing, threshold 0.5).
+
+The threshold is, in order: --threshold, the one stored in the checkpoint (chosen on val for the
+target fire recall), or 0.5. The report also shows the threshold that would hit --target-recall
+on THIS set; use it to understand the trade-off, not to tune on the test set.
+"""
+from __future__ import annotations
+
+import argparse
 import os
-import torch
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
-from PIL import Image
-import open_clip
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import average_precision_score, classification_report, confusion_matrix, roc_auc_score
 
-# ------------------- SETTINGS -------------------
-device = "cuda" if torch.cuda.is_available() else "cpu"
-test_fire_path = os.getenv("TEST_FIRE_PATH")
-test_nonfire_path = os.getenv("TEST_NONFIRE_PATH")
-prompt_path = "learned_prompts.pth"
-output_csv = "fire_predictions.csv"
-
-# ------------------- LOAD MODEL -------------------
-model, _, preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
-tokenizer = open_clip.get_tokenizer("ViT-B-32")
-model.to(device)
-model.eval()
-
-# ------------------- LOAD LEARNED PROMPTS -------------------
-learned_prompts = torch.load(prompt_path, map_location=device)
-if isinstance(learned_prompts, dict):
-    learned_prompts = learned_prompts.get("prompts", None)
-if learned_prompts is None:
-    raise ValueError("❌ Could not load learned prompts correctly.")
-learned_prompts = learned_prompts.to(device)
-
-class_names = ["fire", "non fire"]
-
-# Encode original text embeddings
-text_tokens = tokenizer(class_names).to(device)
-with torch.no_grad():
-    class_embeddings = model.encode_text(text_tokens)
-
-# Apply prompt tuning
-def apply_prompt_tuning(class_embeddings, learned_prompts):
-    tuned_embeddings = []
-    for i, emb in enumerate(class_embeddings):
-        # Ensure learned prompt is 2D [num_prompts, embed_dim]
-        prompt = learned_prompts[i]
-        if prompt.dim() == 3:  # sometimes saved with an extra batch dim
-            prompt = prompt.squeeze(0)
-
-        # Average prompt tokens -> single vector
-        prompt_mean = prompt.mean(0, keepdim=True)  # [1, embed_dim]
-
-        # Combine with original embedding
-        tuned = torch.cat([prompt_mean, emb.unsqueeze(0)], dim=0).mean(0)
-
-        tuned_embeddings.append(tuned)
-
-    tuned_embeddings = torch.stack(tuned_embeddings, dim=0)
-    tuned_embeddings = tuned_embeddings / tuned_embeddings.norm(dim=-1, keepdim=True)
-    return tuned_embeddings
+from clip_fire import (classifier_weights, encode_images, fire_prob, list_images, load_clip, load_env,
+                       operating_point, pick_device, read_checkpoint, threshold_at_recall)
 
 
-tuned_embeddings = apply_prompt_tuning(class_embeddings, learned_prompts)
+def parse_args():
+    load_env()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    default_ckpt = "learned_prompts_coop.pth" if Path("learned_prompts_coop.pth").exists() else "learned_prompts.pth"
+    ap.add_argument("--ckpt", default=default_ckpt)
+    ap.add_argument("--fire", default=os.getenv("TEST_FIRE_PATH"))
+    ap.add_argument("--not-fire", default=os.getenv("TEST_NONFIRE_PATH"))
+    ap.add_argument("--images", help="unlabelled folder (overrides --fire/--not-fire)")
+    ap.add_argument("--out", default="fire_predictions.csv")
+    ap.add_argument("--threshold", type=float)
+    ap.add_argument("--target-recall", type=float, default=0.99)
+    ap.add_argument("--batch-size", type=int, default=64)
+    ap.add_argument("--device")
+    ap.add_argument("--workers", type=int, default=0)
+    return ap.parse_args()
 
-# ------------------- PREDICTION -------------------
-def predict_folder(folder, true_label, tuned_embeddings):
-    results = []
-    for img_name in os.listdir(folder):
-        if not img_name.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".tif")):
-            continue
-        img_path = os.path.join(folder, img_name)
-        try:
-            image = preprocess(Image.open(img_path).convert("RGB")).unsqueeze(0).to(device)
-            with torch.no_grad():
-                image_features = model.encode_image(image)
-                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-                logits = 100.0 * image_features @ tuned_embeddings.T
-                probs = torch.softmax(logits, dim=-1)
-                pred_idx = probs.argmax(dim=-1).item()
-                confidence = probs[0, pred_idx].item()
-                predicted_label = class_names[pred_idx]
 
-            results.append({
-                "image_name": img_name,
-                "true_label": true_label,
-                "predicted_label": predicted_label,
-                "confidence": round(confidence, 4)
-            })
-            print(f"✅ {img_name} | True: {true_label} | Pred: {predicted_label} ({confidence:.2f})")
-        except Exception as e:
-            print(f"❌ Error with {img_name}: {e}")
-    return results
+def main():
+    a = parse_args()
+    device = pick_device(a.device)
+    ck = read_checkpoint(a.ckpt)
+    model, preprocess, tokenizer = load_clip(ck["arch"], ck["pretrained"], ck["resize_mode"], device,
+                                             ck.get("quick_gelu"))
+    weights = classifier_weights(model, tokenizer, ck, device)
+    t = a.threshold if a.threshold is not None else (ck.get("threshold") or 0.5)
+    print(f"checkpoint {a.ckpt} ({ck['format']}), classes {ck['class_names']}, "
+          f"preprocessing '{ck['resize_mode']}', threshold {t:.4f}")
 
-all_results = []
-all_results += predict_folder(test_fire_path, "fire", tuned_embeddings)
-all_results += predict_folder(test_nonfire_path, "non fire", tuned_embeddings)
+    if a.images:
+        paths, truth = list_images(a.images), None
+    else:
+        fire, other = list_images(a.fire), list_images(a.not_fire)
+        paths, truth = fire + other, np.array([True] * len(fire) + [False] * len(other))
+    feats, ok = encode_images(model, preprocess, paths, device, a.batch_size, a.workers)
+    ok = ok.numpy()
+    p = fire_prob(model, feats, weights).numpy()
 
-# ------------------- SAVE CSV -------------------
-df = pd.DataFrame(all_results)
-df.to_csv(output_csv, index=False)
-print(f"\n📁 Predictions saved to {output_csv}")
+    df = pd.DataFrame({"image_path": [str(x) for x in paths], "p_fire": p.round(5),
+                       "pred": np.where(p >= t, "fire", "not_fire"), "readable": ok})
+    if truth is not None:
+        df.insert(1, "true", np.where(truth, "fire", "not_fire"))
+    df.loc[~ok, "p_fire"] = np.nan
+    df.loc[~ok, "pred"] = ""
+    df.to_csv(a.out, index=False)
+    print(f"{len(df)} images -> {a.out}" + (f"  ({(~ok).sum()} unreadable, excluded)" if (~ok).any() else ""))
+    if truth is None:
+        print(f"predicted fire: {(df.pred == 'fire').sum()} / {ok.sum()}")
+        return
 
-# ------------------- STATISTICS -------------------
-y_true = df["true_label"]
-y_pred = df["predicted_label"]
-print("\n📊 Classification Report:")
-print(classification_report(y_true, y_pred, target_names=class_names, zero_division=0))
-print(f"✅ Overall Accuracy: {accuracy_score(y_true, y_pred):.4f}")
+    p, truth = p[ok], truth[ok]
+    pred = p >= t
+    print("\n" + classification_report(truth, pred, labels=[True, False], target_names=["fire", "not_fire"],
+                                       digits=4, zero_division=0))
+    tn, fp, fn, tp = confusion_matrix(truth, pred, labels=[False, True]).ravel()
+    print(f"confusion: fire caught {tp}, fire missed {fn}, non-fire rejected {tn}, non-fire flagged {fp}")
+    if 0 < truth.sum() < len(truth):
+        print(f"ROC-AUC {roc_auc_score(truth, p):.4f} | average precision {average_precision_score(truth, p):.4f}")
+    op = operating_point(p, truth, t)
+    print(f"at threshold {t:.4f}: fire recall {op['fire_recall']:.4f}, non-fire rejected {op['false_alarms_rejected']:.4f}")
+    t2 = threshold_at_recall(p, truth, a.target_recall)
+    op2 = operating_point(p, truth, t2)
+    print(f"for reference, {a.target_recall:.0%} fire recall on this set needs threshold {t2:.4f} "
+          f"-> non-fire rejected {op2['false_alarms_rejected']:.4f}")
+
+
+if __name__ == "__main__":
+    main()
